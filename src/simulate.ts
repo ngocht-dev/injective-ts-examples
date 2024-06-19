@@ -1,21 +1,43 @@
 import { config } from "dotenv";
-import { Network } from "@injectivelabs/networks";
-import { PrivateKey } from "@injectivelabs/sdk-ts";
-import { MsgSend } from "@injectivelabs/sdk-ts";
-import { BigNumberInBase } from "@injectivelabs/utils";
-import { MsgBroadcasterWithPk } from "@injectivelabs/sdk-ts";
+import { getNetworkInfo, Network } from "@injectivelabs/networks";
+import {
+  TxClient,
+  PrivateKey,
+  TxRestClient,
+  ChainRestAuthApi,
+  createTransaction,
+  MsgSend,
+  getGasPriceBasedOnMessage,
+} from "@injectivelabs/sdk-ts";
+import {
+  BigNumberInBase,
+  DEFAULT_STD_FEE,
+  getStdFee,
+} from "@injectivelabs/utils";
 
 config();
 
 /** MsgSend Example */
 (async () => {
+  const network = getNetworkInfo(Network.Testnet);
+
+  const fee_ = getStdFee({});
+  console.log("fee before", fee_, DEFAULT_STD_FEE);
   const privateKeyHash = process.env.PRIVATE_KEY as string;
+
+  console.log("privateKeyHash: ", privateKeyHash);
   const privateKey = PrivateKey.fromHex(privateKeyHash);
   const injectiveAddress = privateKey.toBech32();
+  const publicKey = privateKey.toPublicKey().toBase64();
+
+  /** Account Details **/
+  const accountDetails = await new ChainRestAuthApi(network.rest).fetchAccount(
+    injectiveAddress
+  );
 
   /** Prepare the Message */
   const amount = {
-    amount: new BigNumberInBase(0.001).toWei().toFixed(),
+    amount: new BigNumberInBase(0.01).toWei().toFixed(),
     denom: "inj",
   };
 
@@ -25,13 +47,44 @@ config();
     dstInjectiveAddress: injectiveAddress,
   });
 
-  const msgBroadcaster = new MsgBroadcasterWithPk({
-    network: Network.Testnet,
-    privateKey: privateKeyHash,
-  });
+  console.log("getGasPriceBasedOnMessage: ", getGasPriceBasedOnMessage([msg]);
 
   /** Prepare the Transaction **/
-  const response = await msgBroadcaster.simulate({ msgs: msg });
+  const { signBytes, txRaw } = createTransaction({
+    message: msg,
+    memo: "",
+    fee: DEFAULT_STD_FEE,
+    pubKey: publicKey,
+    sequence: parseInt(accountDetails.account.base_account.sequence, 10),
+    accountNumber: parseInt(
+      accountDetails.account.base_account.account_number,
+      10
+    ),
+    chainId: network.chainId,
+  });
 
-  console.log(response.gasInfo);
+  /** Sign transaction */
+  const signature = await privateKey.sign(Buffer.from(signBytes));
+
+  /** Append Signatures */
+  txRaw.signatures = [signature];
+
+  /** Calculate hash of the transaction */
+  console.log(`Transaction Hash: ${TxClient.hash(txRaw)}`);
+
+  const txService = new TxRestClient(network.rest);
+
+  /** Simulate transaction */
+  const simulationResponse = await txService.simulate(txRaw);
+  console.log(
+    `Transaction simulation response: ${JSON.stringify(
+      simulationResponse.gasInfo
+    )}`
+  );
+
+  const fee = getStdFee({
+    gas: simulationResponse.gasInfo.gasUsed,
+  });
+
+  console.log("fee after: ", fee);
 })();
